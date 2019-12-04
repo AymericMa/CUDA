@@ -1,0 +1,230 @@
+= Exemples CUDA
+Patrick Martineau <patrick.martineau@univ-tours.fr>
+v1.0, 2018-03-30
+:sectnums:
+:imagesdir: ./images
+:sourcesdir: ./sources
+
+:toc:
+
+
+== Les bases
+
+L'environnement de développement pour CUDA doit être installé sur votre ordinateur, équipé d'une carte NVIDIA.
+
+=== Vérification de la compilation par votre compilateur, exemple avec nvcc
+
+Lien sur <<{sourcesdir}/hello_world.cu,hello_world.cu>>.
+[source,C]
+include::{sourcesdir}/hello_world.cu[]
+
+[source,sh]
+$ nvcc hello_world.cu -o hello_world
+$ ./hello_world
+
+Ce programme ne fait pas appel au GPU mais uniquement au compilateur nvcc appliqué à du code C classique.
+Comme nvcc s'appuye sur gcc, il n'y a pas de problème pour compiler du C.
+
+=== Première utilisation du GPU
+
+L'exemple suivant permet d'introduire la création d'un kernel.
+Un kernel est compilé dans le code assembleur correspond au GPU cible.
+Là, nvcc réalise donc un travail spécifique.
+Ensuite, le noyau est lancé une fois sur un coeur du GPU.
+
+Lien sur <<{sourcesdir}/simple_kernel.cu,simple_kernel.cu>>.
+[source,C]
+include::{sourcesdir}/simple_kernel.cu[]
+
+Lors de l'exécution des deux programmes hello_world et simple_kernel, le résultat est le même : affichage de Hello World!.
+
+Par contre, si vous prenez le temps de mesurer le temps d'exécution de ces deux programmes, vous pourrez observer une différence significative : simple_kernel prend du temps pour transférer le code de la fonction kernel sur le GPU, créer un thread sur le GPU et exécuter ce thread (qui ne fait rien).
+
+L'étape suivante consiste à ajouter le passage de paramètre de l'hôte au kernel
+et de récupérer le résultat du calcul réalisé par ce kernel.
+Ainsi, on voit apparaître clairement 2 des 3 étapes indispensables lors de l'utilisation d'un GPU.
+
+* L'allocation mémoire au niveau du GPU
+* Le démarrage du Kernel
+* La récupération du résultat du Kernel
+
+Notez bien l'utilisation de *c* et de *dev_c* identifiant 2 espaces mémoires correspondant à la même variable fonctionnelle.
+
+Lien sur <<{sourcesdir}/simple_kernel_params.cu,simple_kernel_params.cu>>.
+[source,C]
+include::{sourcesdir}/simple_kernel_params.cu[]
+
+L'exemple suivant illustre l'appel d'une fonction à l'intérieur d'un noyau.
+On utilise alors __device__ car cette fonction ne peut pas être appelée directement par le CPU. Elle sera résidente sur le GPU et uniquement appelable par du code s'exécutant sur le GPU.
+
+Lien sur <<{sourcesdir}/simple_device_call.cu,simple_device_call.cu>>.
+[source,C]
+include::{sourcesdir}/simple_device_call.cu[]
+
+== Première utilisation du parallélisme
+
+Prenons un exemple simple : l'addition de 2 vecteurs.
+Le code C suivant se décompose en trois parties :
+
+* L'initialisation des vecteurs a et b,
+* Le calcul du vecteur c somme de a et de b
+* l'affichage du résultat
+
+Ce qui nous intéresse est de paralléliser le calcul de la somme.
+Le GPU a vocation à être utilisé pour du massivement parallèle.
+Dans l'exemple, la taille des vecteurs est limité à 10, on souhaite donc faire les 10 additions en parallèle...
+La somme des vecteurs est donc isolée dans la fonction add().
+Dans la version CPU, celui-ci exécute une boucle de 1 à N pour réaliser successivement l'addition pour chaque composante.
+
+
+Lien sur <<{sourcesdir}/add_loop_cpu.cu,add_loop_cpu.cu>>.
+[source,C]
+include::{sourcesdir}/add_loop_cpu.cu[]
+
+La version parallèle avec le GPU consiste donc à réduire la fonction add à la somme sur une seule composante.
+En plus du code 'CPU' on retrouve donc :
+
+* l'allocation initiale de la mémoire GPU pour les 3 vecteurs a, b et c
+* l'initialisation de a et b par recopie des valeurs depuis le cpu
+* le démarrage de 10 threads, chacun effectuant 1 addition, dans 10 blocs différents
+* la recopie du vecteur c depuis la mémoire du GPU
+* la libération de l'espace mémoire utilisée dans le GPU.
+
+Lien sur <<{sourcesdir}/add_loop_gpu.cu,add_loop_gpu.cu>>.
+[source,C]
+include::{sourcesdir}/add_loop_gpu.cu[]
+
+Remarque : Un point important est de bien comprendre que les 2 uunités de traitement, CPU et GPU, vont devoir collaborer pour se répartir le travail.
+Cette répartition est à l'initiative du CPU.
+Il faut aussi gérer les deux espaces mémoires et quand le GPU exécute des threads, l'espace mémoire utilisé est celui du GPU car il ne peut accéder directement à la mémoire du CPU.
+
+[red]#*Il est bon de prendre dès le début les bonnes habitudes : distinguer le nom des variables du CPU du nom des variables du GPU !*#
+
+== Mise en oeuvre efficace
+
+L'intérêt du GPU apparait quand on utilise un grand nombre de threads en parallèle.
+On reprend donc l'exemple simple précédent, l'addition de deux vecteurs, et on répartit le calcul sur 128 threads.
+(On utilise toujours des puissances de 2)
+La fonction add est donc modifiée de manière à répartir les calculs des différentes composantes sur les threads.
+Chaque thread a un numéro différent des autres, et "saute" d'une composante à l'autre en ajoutant le nombre de threads.
+
+Lien sur <<{sourcesdir}/add_loop_long.cu,add_loop_long.cu>>.
+[source,C]
+include::{sourcesdir}/add_loop_long.cu[]
+
+Dans cet exemple, on retrouve les 5 étapes comme dans l'exemple précédent.
+On remarque que la dernière partie n'est qu'une vérification car elle consiste à recalculer la somme des composantes sur le CPU et à comparer le résultat avec le calcul GPU.
+
+
+L'exemple suivant reprend le même principe mais en utilisant des threads en parallèle au sein d'un block (et non des blocks en parallèle avec chacun 1 thread).
+
+Lien sur <<{sourcesdir}/add_loop_blocks.cu,add_loop_blocks.cu>>.
+[source,C]
+include::{sourcesdir}/add_loop_blocks.cu[]
+
+La meilleure solution est évidemment la dernière qui utilise un grand nombre de threads répartis entre plusieurs blocks contenant chacun plusieurs threads.
+
+Lien sur <<{sourcesdir}/add_loop_long_blocks.cu,add_loop_long_blocks.cu>>.
+[source,C]
+include::{sourcesdir}/add_loop_long_blocks.cu[]
+
+== Utilisation adaptée des différentes zones mémoires
+
+=== Mémoire partagée
+
+La mémoire partagée est accessible par tous les threads au sein du même block.
+La mémoire est accessible en lecture et écriture mais elle ne peut être adresssée depuis le CPU.
+C'est donc au sein du block que les threads doivent initialiser la mémoire partagée et, en fin de calcul, recopier le résultat dans la zone de mémoire globale du GPU.
+A partir de cette mémoire globale, le CPU pourra récupérer ce résultat final et le recopier dans la mémoire du CPU.
+
+==== Calcul réparti mais résultat global
+
+L'exemple choisi pour mettre en évidence le travail collaboratif des threads, et le niveau de collaboration à mettre en oeuvre sur la base de l'utilisation adaptée des différentes zones mémoires est le calcul d'un histogramme.
+On prend un texte en entrée et on veut calculer le nombre d'occurences de chaque lettre.
+
+La version CPU parcourt donc séquentiellement l'ensemble du texte et, pour chaque lettre identifiée, incrémente son compteur dans un tableau "histo".
+
+Lien sur <<{sourcesdir}/hist_cpu.cu,hist_cpu.cu>>.
+[source,C]
+include::{sourcesdir}/hist_cpu.cu[]
+
+La version initiale adaptée pour le GPU consiste à identifier le noyau à paralléliser.
+On identifie rapidement que le texte en entrée peut être découpé en morceaux traités indépendamment par chaque thread.
+La mise en oeuvre est réalisée par "saut" ce qui permet de s'adapter implicitement à la taille de l'entrée et au nombre de threads.
+Par contre, comme le résultat est global, il faut que les compteurs "histo" soient partagés.
+Pour obtenir un résultat cohérent, on assure l'accès en exclusion mutuelle à "histo".
+
+Lien sur <<{sourcesdir}/hist_gpu_gmem_atomics.cu,hist_gpu_gmem_atomics.cu>>.
+[source,C]
+include::{sourcesdir}/hist_gpu_gmem_atomics.cu[]
+
+Cette mise en oeuvre montre des limites dues aux  performances d'accès à la mémoire globale lorsque de nombreux threads veulent y accéder simultanément.
+En effet, même si tous les threads n'accèdent pas simultanément à la même case mémoire, tous utilisent le même bus interne à la carte GPU.
+
+Pour accélérer le fonctionnement de cette mise en oeuvre parallèle, il faut permettre aux threads de ne pas être *trop* ralentis par l'accès à la mémoire.
+On peut envisager que chaque thread ait un tableau histo dans lequel il peut librement incrémenter ses compteurs mais cela utiliserait beaucoup de mémoire locale et conduirait à un gros travail de synthèse à la terminaison de tous les threads.
+La solution intermédiaire présentée ici, consiste à créer une zone partagée "shared" accessible en lecture / écriture à l'ensemble des threads d'un même block.
+
+Comme il y a moins de threads potentiellement intéressés par ce tableau, il y a moins de concurrence et comme le tableau est local au block, il est alloué dans une zone proche des threads.
+Globalement, l'accès est donc beaucoup plus rapide.
+Par contre, il ne faut pas oublier de consolider le résultat à la fin du block.
+Cette consolidation doit se faire en exclusion mutuelle.
+
+On voit apparaitre un équilibre à trouver entre le nombre de block (plus il est important et plus on sépare les traitements mais plus on aura de travail lors de la consolidation) et le nombre des threads (plus ils sont nombreux et plus on parallélise mais plus il y a de concurrence sur le tableau partagé).
+
+Remarque : le choix aui est fait ici est de créer autant de threads qu'il y a de symboles à compter (et donc de cases dans le tableau histogramme).
+Cela permet d'utiliser l'astuce suivante, chaque thread s'occupe de l'initialisation et de la consolidation d'une case du tableau.
+Chacune de ces opérations étant réalisée en parallèle sur les 256 threads.
+
+Lien sur <<{sourcesdir}/hist_gpu_shmem_atomics.cu,hist_gpu_shmem_atomics.cu>>.
+[source,C]
+include::{sourcesdir}/hist_gpu_shmem_atomics.cu[]
+
+==== Produit scalaire : calcul parallèle et réduction
+
+L'exemple suivant reprend l'intérêt de mettre en place une zone de mémoire partagée pour accélérer les traitements mais aussi affine le calcul d'une réduction puisqu'on veut un scalaire et non un tableau au final.
+
+Lien sur <<{sourcesdir}/dot.cu,dot.cu>>.
+[source,C]
+include::{sourcesdir}/dot.cu[]
+
+Normalement, sur la base de ces exemples, vous devez avoir compris :
+
+* [x] l'intérêt de la zone de mémoire partagée
+* [x] comment tirer partie de cette zone de mémoire à accès rapide mais locale au block
+* [x] Comment mettre en oeuvre une réduction (c'est plus compliqué qu'avec OpenMP)
+
+=== Mémoire constante
+
+Il existe une autre zone mémoire intéressante, la mémoire constante.
+De taille limitée, elle est accessible en lecture uniquement.
+Son accès est plus rapide parce qu'elle profite implicitement des zones de cache.
+Dès qu'un thread y accède, les autres threads du block n'auront pas besoin d'attendre un accès à la mémoire globale, la donnée se trouve accessible (et correcte parce que non modifiable) dans la zone de cache locale.
+
+L'exemple suiavnt montre un calcul d'image basé sur le lancement de rayon sur des sphères.
+Les caractéristiques des sphères sont positionnées dans la mémoire constante et tous les threads y accèdent rapidement.
+Les deux versions ci-dessous proposent la version sans mémoire constante et celle utilisant la mémoire constante.
+
+Lien sur <<{sourcesdir}/ray_noconst.cu,ray_noconst.cu>>.
+[source,C]
+include::{sourcesdir}/ray_noconst.cu[]
+
+
+Lien sur <<{sourcesdir}/ray.cu,ray.cu>>.
+[source,C]
+include::{sourcesdir}/ray.cu[]
+
+== Conclusion
+
+Un complément à regarder est la manière de masquer les tranferts avec le GPU en utilisant les "streams".
+Du point de vue de l'optimisation globale, on peut avoir intérêt à découper un flux de donner en deux (ou plus) et ainsi cacher une partie des transferts vers le GPU (ou depuis le GPU) par les traitements ralisés sur l'autre moitié du flux.
+
+* basic_double_stream_correct.cu
+
+Le dernier exemple important montre comment tirer partie de plusieurs GPU présents sur la machine et donc comment associer les demandes de traitements à un GPU en particulier.
+On utilise cudaSetDevice() pour préciser le GPU concerné par les instructions suivantes.
+Les autres éléments permettent de séparer les données pour chaque stream et associe un thread à chaque GPU pour associer les synchronisations liés à un GPU avec un seul thread.
+
+* multidevice.cu
+
+//enum_gpu.cu
